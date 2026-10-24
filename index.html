@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+    <title>P2P Minimal</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        :root { --primary: #007bff; --success: #28a745; --bg: #121212; --surface: #1e1e2d; --border: #2a2a3d; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: #fff; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+        
+        /* Header minimalista */
+        .header { background: var(--surface); padding: 10px 15px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); font-size: 13px; }
+        #status { color: #ffc107; font-weight: bold; font-size: 11px; text-transform: uppercase; }
+
+        /* Área de conexão compacta */
+        .conn-area { background: var(--surface); padding: 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+        .conn-row { display: flex; gap: 6px; }
+        
+        input { flex: 1; background: #121212; border: 1px solid var(--border); color: #fff; padding: 10px; border-radius: 6px; font-size: 14px; outline: none; text-align: center; }
+        input:focus { border-color: var(--primary); }
+        
+        button { background: var(--primary); color: white; border: none; padding: 10px 14px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 13px; }
+        button:active { opacity: 0.8; }
+        .btn-sec { background: #333; color: #ccc; }
+
+        /* Chat minimalista */
+        #chat { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; background: #0f0f0f; }
+        .bubble { padding: 10px 12px; border-radius: 8px; max-width: 85%; font-size: 14px; position: relative; word-break: break-all; }
+        .me { align-self: flex-end; background: #1a3a2a; border: 1px solid #234e35; }
+        .them { align-self: flex-start; background: #1a1a24; border: 1px solid var(--border); }
+        .bubble small { display: block; opacity: 0.4; font-size: 9px; margin-bottom: 2px; }
+
+        /* Download */
+        .download-ready { color: #4da6ff !important; text-decoration: underline !important; font-weight: bold; display: inline-block; margin-top: 4px; }
+
+        /* Barra de Progresso */
+        .progress-container { width: 100%; background: #333; height: 4px; border-radius: 2px; margin-top: 6px; overflow: hidden; }
+        .progress-fill { height: 100%; background: var(--success); width: 0%; transition: width 0.1s linear; }
+
+        /* Footer / Input */
+        .footer { padding: 10px; background: var(--surface); border-top: 1px solid var(--border); display: flex; gap: 6px; align-items: center; }
+        #msg-input { text-align: left; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <strong>P2P MINI</strong>
+    <span id="id-display" style="font-family: monospace; opacity:0.7;">ID: ----</span>
+    <div id="status">INICIANDO</div>
+</div>
+
+<div class="conn-area" id="conn-area">
+    <div class="conn-row">
+        <button class="btn-sec" onclick="copiarLink()" id="copy-btn" style="flex:1;">📋 Copiar Link</button>
+    </div>
+    <div class="conn-row">
+        <input type="text" id="remote-id" placeholder="ID de 4 dígitos" maxlength="4" autocomplete="off">
+        <button onclick="conectarManual()">LIGAR</button>
+    </div>
+</div>
+
+<div id="chat"></div>
+
+<div class="footer">
+    <input type="file" id="file-input" style="display:none" onchange="enviarArquivo()">
+    <button class="btn-sec" onclick="document.getElementById('file-input').click()">📎</button>
+    <input type="text" id="msg-input" placeholder="Mensagem..." autocomplete="off">
+    <button onclick="enviarTexto()">➤</button>
+</div>
+
+<script>
+    const fixed4DigitId = Math.floor(1000 + Math.random() * 9000).toString();
+    const peer = new Peer(fixed4DigitId);
+    let conn;
+    let fileChunks = {};
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const remoteIdToConnect = urlParams.get('connect');
+
+    peer.on('open', id => {
+        document.getElementById('id-display').innerText = `ID: ${id}`;
+        
+        if (remoteIdToConnect) {
+            document.getElementById('status').innerText = "CONECTANDO...";
+            conn = peer.connect(remoteIdToConnect);
+            setup();
+        } else {
+            document.getElementById('status').innerText = "ONLINE";
+            document.getElementById('status').style.color = "#00ff88";
+        }
+    });
+
+    peer.on('error', err => {
+        if (err.type === 'unavailable-id') {
+            location.reload(); // Recarrega silenciosamente para tentar outro ID se houver conflito
+        } else {
+            document.getElementById('status').innerText = "ERRO";
+        }
+    });
+
+    peer.on('connection', c => { conn = c; setup(); });
+
+    function conectarManual() {
+        const id = document.getElementById('remote-id').value.trim();
+        if(id.length !== 4) return alert("Digite 4 dígitos!");
+        document.getElementById('status').innerText = "CONECTANDO...";
+        conn = peer.connect(id);
+        setup();
+    }
+
+    function setup() {
+        conn.on('open', () => {
+            document.getElementById('status').innerText = "CONECTADO";
+            document.getElementById('status').style.color = "#00ff88";
+            document.getElementById('conn-area').style.display = 'none';
+        });
+
+        conn.on('data', data => {
+            if (data.type === 'text') addBubble("Amigo", data.val, "them");
+            if (data.type === 'file-start') {
+                fileChunks[data.fileId] = { name: data.name, chunks: [], total: data.totalChunks };
+                addBubble("Arquivo", `Recebendo: ${data.name}`, "them", data.fileId);
+            }
+            if (data.type === 'file-chunk') {
+                const info = fileChunks[data.fileId];
+                info.chunks[data.index] = data.chunk;
+                const recebidos = info.chunks.filter(n => n).length;
+                const p = Math.floor((recebidos / info.total) * 100);
+                
+                const fill = document.getElementById(`fill-${data.fileId}`);
+                if(fill) fill.style.width = p + '%';
+
+                if (recebidos === info.total) {
+                    const blob = new Blob(info.chunks);
+                    const url = URL.createObjectURL(blob);
+                    const textContainer = document.getElementById(`text-${data.fileId}`);
+                    const progressContainer = document.getElementById(`prog-cont-${data.fileId}`);
+                    
+                    textContainer.innerHTML = `<a href="${url}" download="${info.name}" class="download-ready">⬇ BAIXAR: ${info.name}</a>`;
+                    progressContainer.style.display = 'none';
+                    delete fileChunks[data.fileId];
+                }
+            }
+        });
+    }
+
+    function copiarLink() {
+        const link = `${window.location.origin}${window.location.pathname}?connect=${peer.id}`;
+        navigator.clipboard.writeText(link).then(() => {
+            const btn = document.getElementById('copy-btn');
+            btn.innerText = "✓ Copiado!";
+            setTimeout(() => btn.innerText = "📋 Copiar Link", 1500);
+        });
+    }
+
+    async function enviarArquivo() {
+        const file = document.getElementById('file-input').files[0];
+        if (!conn || !file) return;
+        const fileId = 'f' + Date.now();
+        const chunkSize = 64000;
+        const total = Math.ceil(file.size / chunkSize);
+        
+        addBubble("Eu", `Enviando: ${file.name}`, "me", fileId);
+        conn.send({ type: 'file-start', fileId, name: file.name, totalChunks: total });
+
+        for (let i = 0; i < total; i++) {
+            const buf = await file.slice(i * chunkSize, (i + 1) * chunkSize).arrayBuffer();
+            conn.send({ type: 'file-chunk', fileId, index: i, chunk: buf });
+            const p = Math.floor(((i + 1) / total) * 100);
+            const fill = document.getElementById(`fill-${fileId}`);
+            if(fill) fill.style.width = p + '%';
+        }
+    }
+
+    function enviarTexto() {
+        const input = document.getElementById('msg-input');
+        if (!conn || !input.value.trim()) return;
+        conn.send({ type: 'text', val: input.value });
+        addBubble("Eu", input.value, "me");
+        input.value = "";
+    }
+
+    function addBubble(u, t, s, id = null) {
+        const div = document.createElement('div');
+        div.className = `bubble ${s}`;
+        div.innerHTML = `
+            <small>${u}</small>
+            <div id="text-${id ? id : ''}">${t}</div>
+            ${id ? `<div class="progress-container" id="prog-cont-${id}"><div class="progress-fill" id="fill-${id}"></div></div>` : ''}
+        `;
+        document.getElementById('chat').appendChild(div);
+        document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
+    }
+
+    document.getElementById('msg-input').onkeypress = (e) => { if(e.key==='Enter') enviarTexto(); };
+</script>
+</body>
+</html>
